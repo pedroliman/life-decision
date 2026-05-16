@@ -483,7 +483,8 @@ def simulate_go(p: dict) -> pd.DataFrame:
             hoi = p["homeowners_insurance_monthly"] * inf
             home_utilities = p["home_utilities_monthly"] * inf
             home_maintenance = house_value * p["home_maintenance_pct"] / 12
-            house_groceries = p["groceries_monthly"] * inf
+            # Once RV is owned we're living in it full-time; groceries shift to RV bucket
+            house_groceries = 0.0 if rv_owned else p["groceries_monthly"] * inf
         else:
             property_tax = hoi = home_utilities = home_maintenance = house_groceries = 0.0
 
@@ -610,6 +611,9 @@ def simulate_go(p: dict) -> pd.DataFrame:
             "Go_NetWorth": net_worth,
             "Go_HouseValue": house_value if not house_sold else 0,
             "Go_MortgageBalance": mortgage_balance if not house_sold else 0,
+            "Go_CX5Value": cx5_value if cx5_active else 0,
+            "Go_CX5Balance": cx5_balance if cx5_active else 0,
+            "Go_AlineValue": aliner_value if not aliner_sold else 0,
             "Go_TruckValue": truck_value if truck_owned else 0,
             "Go_TruckBalance": truck_balance if truck_owned else 0,
             "Go_RVValue": rv_value if rv_owned else 0,
@@ -975,95 +979,355 @@ def main():
     # -----------------------------------------------------------------------
     # CHARTS
     # -----------------------------------------------------------------------
+    from plotly.subplots import make_subplots
+
     st.subheader("Interactive Charts")
 
-    def add_event_markers(fig, events_list, y_ref=None):
-        """Add vertical dashed lines for each life event."""
-        for ev in events_list:
-            fig.add_vline(x=ev["Month"], line_dash="dot",
-                          line_color="rgba(128,128,128,0.5)",
-                          annotation_text=ev["Event"][:25],
-                          annotation_textangle=-90,
-                          annotation_font_size=8)
+    # Build event label map: month → short label (numbered for tight charts)
+    event_labels = {ev["Month"]: f"E{i+1}" for i, ev in enumerate(events)}
+    event_legend = "  ".join(
+        f"**E{i+1}** {ev['Event'][:45]}" for i, ev in enumerate(events))
 
-    tab1, tab2, tab3, tab4 = st.tabs(
-        ["Net Worth", "Cash Balance", "Assets vs Debt", "Retirement"])
+    def add_event_shapes(fig, events_list, row=None, col=None):
+        """Vertical dashed lines + top-of-chart labels for each event."""
+        kwargs = {}
+        if row is not None:
+            kwargs = {"row": row, "col": col}
+        for i, ev in enumerate(events_list):
+            m = ev["Month"]
+            fig.add_vline(x=m, line_dash="dash",
+                          line_color="rgba(90,90,90,0.35)", line_width=1, **kwargs)
+            fig.add_annotation(
+                x=m, yref="paper", y=1.02, xref="x",
+                text=f"E{i+1}", showarrow=False,
+                font=dict(size=9, color="gray"),
+                **({} if row is None else {"xref": f"x{col if col>1 else ''}", "yref": f"y{row} domain"}),
+            )
 
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(
+        ["Net Worth", "Liquid Wealth", "Monthly Cash Flow", "Assets & Debt", "Retirement"])
+
+    # ------------------------------------------------------------------
+    # Tab 1: Net Worth — two lines + shaded difference + event markers
+    # ------------------------------------------------------------------
     with tab1:
+        if event_legend:
+            st.caption(event_legend)
+
         fig1 = go.Figure()
-        fig1.add_trace(go.Scatter(x=df["Month"], y=df["Stay_NetWorth"],
-                                   name="Stay", line=dict(color="steelblue", width=2.5)))
-        fig1.add_trace(go.Scatter(x=df["Month"], y=df["Go_NetWorth"],
-                                   name="Go", line=dict(color="darkorange", width=2.5)))
-        fig1.add_trace(go.Scatter(x=df["Month"], y=df["Difference"],
-                                   name="Difference (Go−Stay)",
-                                   line=dict(color="gray", width=1, dash="dot"),
-                                   yaxis="y2"))
-        add_event_markers(fig1, events)
+
+        # Shade the gap: red when Stay > Go, green when Go > Stay
+        months_list = df["Month"].tolist()
+        stay_nw = df["Stay_NetWorth"].tolist()
+        go_nw   = df["Go_NetWorth"].tolist()
+
+        # Build fill regions by splitting at sign changes
+        stay_ahead_x, stay_ahead_upper, stay_ahead_lower = [], [], []
+        go_ahead_x,   go_ahead_upper,   go_ahead_lower   = [], [], []
+        for x, s, g in zip(months_list, stay_nw, go_nw):
+            if s >= g:
+                stay_ahead_x.append(x); stay_ahead_upper.append(s); stay_ahead_lower.append(g)
+            else:
+                go_ahead_x.append(x); go_ahead_upper.append(g); go_ahead_lower.append(s)
+
+        if stay_ahead_x:
+            fig1.add_trace(go.Scatter(
+                x=stay_ahead_x + stay_ahead_x[::-1],
+                y=stay_ahead_upper + stay_ahead_lower[::-1],
+                fill="toself", fillcolor="rgba(220,80,80,0.12)",
+                line=dict(color="rgba(0,0,0,0)"),
+                name="Stay ahead (shaded)", hoverinfo="skip", showlegend=True))
+        if go_ahead_x:
+            fig1.add_trace(go.Scatter(
+                x=go_ahead_x + go_ahead_x[::-1],
+                y=go_ahead_upper + go_ahead_lower[::-1],
+                fill="toself", fillcolor="rgba(60,180,60,0.12)",
+                line=dict(color="rgba(0,0,0,0)"),
+                name="Go ahead (shaded)", hoverinfo="skip", showlegend=True))
+
+        fig1.add_trace(go.Scatter(
+            x=df["Month"], y=df["Stay_NetWorth"],
+            name="Stay", line=dict(color="steelblue", width=2.5),
+            hovertemplate="Stay NW: $%{y:,.0f}<extra></extra>"))
+        fig1.add_trace(go.Scatter(
+            x=df["Month"], y=df["Go_NetWorth"],
+            name="Go", line=dict(color="darkorange", width=2.5),
+            hovertemplate="Go NW: $%{y:,.0f}<extra></extra>"))
+
+        # Difference on right axis
+        fig1.add_trace(go.Scatter(
+            x=df["Month"], y=df["Difference"],
+            name="Gap (Go−Stay)", yaxis="y2",
+            line=dict(color="rgba(120,120,120,0.6)", width=1.5, dash="dot"),
+            hovertemplate="Gap: $%{y:,.0f}<extra></extra>"))
+
+        # Event markers + dot annotations on the Go line at event months
+        for i, ev in enumerate(events):
+            m = ev["Month"]
+            go_val = df.loc[df["Month"] == m, "Go_NetWorth"]
+            if not go_val.empty:
+                fig1.add_vline(x=m, line_dash="dash",
+                               line_color="rgba(90,90,90,0.3)", line_width=1)
+                fig1.add_annotation(
+                    x=m, y=go_val.iloc[0], text=f"E{i+1}",
+                    showarrow=True, arrowhead=2, arrowcolor="gray",
+                    ax=15, ay=-30, font=dict(size=9, color="gray"))
+
         fig1.update_layout(
-            title="Net Worth Over Time",
-            xaxis_title="Month", yaxis_title="Net Worth ($)",
-            yaxis2=dict(title="Difference ($)", overlaying="y", side="right",
-                        showgrid=False),
-            hovermode="x unified", yaxis_tickformat="$,.0f",
-            yaxis2_tickformat="$,.0f")
+            title="Net Worth Over 10 Years",
+            xaxis_title="Month",
+            yaxis=dict(title="Net Worth ($)", tickformat="$,.0f"),
+            yaxis2=dict(title="Gap: Go−Stay ($)", overlaying="y", side="right",
+                        showgrid=False, tickformat="$,.0f", zeroline=True,
+                        zerolinecolor="rgba(100,100,100,0.3)"),
+            hovermode="x unified", legend=dict(orientation="h", y=-0.15))
         st.plotly_chart(fig1, use_container_width=True)
 
+    # ------------------------------------------------------------------
+    # Tab 2: Liquid Wealth (cash + taxable investments)
+    # ------------------------------------------------------------------
     with tab2:
+        if event_legend:
+            st.caption(event_legend)
+
         fig2 = go.Figure()
-        fig2.add_trace(go.Scatter(x=df["Month"],
-                                   y=df["Stay_Cash"] + df["Stay_TaxableInv"],
-                                   name="Stay Liquid (cash + investments)",
-                                   line=dict(color="steelblue", width=2.5)))
-        fig2.add_trace(go.Scatter(x=df["Month"],
-                                   y=df["Go_Cash"] + df["Go_TaxableInv"],
-                                   name="Go Liquid (cash + investments)",
-                                   line=dict(color="darkorange", width=2.5)))
-        fig2.add_hline(y=float(emergency_floor), line_dash="dash",
-                        line_color="red", opacity=0.6,
-                        annotation_text=f"Emergency Floor ${emergency_floor:,.0f}")
-        add_event_markers(fig2, events)
-        fig2.update_layout(title="Liquid Wealth Over Time (Cash + Taxable Investments)",
-                            xaxis_title="Month", yaxis_title="Amount ($)",
-                            hovermode="x unified", yaxis_tickformat="$,.0f")
+        fig2.add_trace(go.Scatter(
+            x=df["Month"], y=df["Stay_Cash"] + df["Stay_TaxableInv"],
+            name="Stay Liquid", line=dict(color="steelblue", width=2.5),
+            hovertemplate="Stay liquid: $%{y:,.0f}<extra></extra>"))
+        fig2.add_trace(go.Scatter(
+            x=df["Month"], y=df["Go_Cash"] + df["Go_TaxableInv"],
+            name="Go Liquid", line=dict(color="darkorange", width=2.5),
+            hovertemplate="Go liquid: $%{y:,.0f}<extra></extra>"))
+        fig2.add_hline(
+            y=float(emergency_floor), line_dash="dash",
+            line_color="red", opacity=0.5,
+            annotation_text=f"Emergency floor ${emergency_floor:,.0f}",
+            annotation_position="bottom right")
+
+        for i, ev in enumerate(events):
+            m = ev["Month"]
+            fig2.add_vline(x=m, line_dash="dash",
+                           line_color="rgba(90,90,90,0.3)", line_width=1)
+            # Label at top of chart area
+            go_liq = df.loc[df["Month"] == m, "Go_Cash"] + df.loc[df["Month"] == m, "Go_TaxableInv"]
+            if not go_liq.empty:
+                fig2.add_annotation(
+                    x=m, y=go_liq.iloc[0], text=f"E{i+1}",
+                    showarrow=True, arrowhead=2, arrowcolor="gray",
+                    ax=15, ay=-25, font=dict(size=9, color="gray"))
+
+        fig2.update_layout(
+            title="Liquid Wealth Over Time (Cash + Taxable Investments)",
+            xaxis_title="Month",
+            yaxis=dict(title="Amount ($)", tickformat="$,.0f"),
+            hovermode="x unified", legend=dict(orientation="h", y=-0.15))
         st.plotly_chart(fig2, use_container_width=True)
 
+    # ------------------------------------------------------------------
+    # Tab 3: Monthly Cash Flow — net income minus total outflows
+    #         This is where discontinuities at events are most visible.
+    # ------------------------------------------------------------------
     with tab3:
-        fig3 = go.Figure()
-        fig3.add_trace(go.Scatter(x=df["Month"], y=df["Stay_Assets"],
-                                   name="Stay Assets",
-                                   fill="tozeroy", line=dict(color="steelblue")))
-        fig3.add_trace(go.Scatter(x=df["Month"], y=-df["Stay_Debt"],
-                                   name="Stay Debt (negative)",
-                                   fill="tozeroy", line=dict(color="lightblue")))
-        fig3.add_trace(go.Scatter(x=df["Month"], y=df["Go_Assets"],
-                                   name="Go Assets",
-                                   fill="tozeroy", line=dict(color="darkorange")))
-        fig3.add_trace(go.Scatter(x=df["Month"], y=-df["Go_Debt"],
-                                   name="Go Debt (negative)",
-                                   fill="tozeroy", line=dict(color="moccasin")))
-        add_event_markers(fig3, events)
-        fig3.update_layout(title="Assets vs Debt Over Time",
-                            xaxis_title="Month", yaxis_title="Value ($)",
-                            hovermode="x unified", yaxis_tickformat="$,.0f")
-        st.plotly_chart(fig3, use_container_width=True)
+        if event_legend:
+            st.caption(event_legend)
 
+        stay_cf = df["Stay_NetIncome"] - df["Stay_TotalOutflow"]
+        go_cf   = df["Go_NetIncome"]   - df["Go_TotalOutflow"]
+
+        fig3 = go.Figure()
+        fig3.add_trace(go.Scatter(
+            x=df["Month"], y=stay_cf,
+            name="Stay: Monthly Surplus", line=dict(color="steelblue", width=2),
+            hovertemplate="Stay surplus: $%{y:,.0f}/mo<extra></extra>"))
+        fig3.add_trace(go.Scatter(
+            x=df["Month"], y=go_cf,
+            name="Go: Monthly Surplus", line=dict(color="darkorange", width=2),
+            hovertemplate="Go surplus: $%{y:,.0f}/mo<extra></extra>"))
+        fig3.add_hline(y=0, line_color="black", line_width=0.8, opacity=0.4)
+
+        for i, ev in enumerate(events):
+            m = ev["Month"]
+            fig3.add_vline(x=m, line_dash="dash",
+                           line_color="rgba(90,90,90,0.35)", line_width=1)
+            y_val = go_cf.iloc[m - 1] if m <= len(go_cf) else 0
+            fig3.add_annotation(
+                x=m, y=y_val, text=f"E{i+1}",
+                showarrow=True, arrowhead=2, arrowcolor="gray",
+                ax=15, ay=-25, font=dict(size=9, color="gray"))
+
+        fig3.update_layout(
+            title="Monthly Cash Flow Surplus (Income after Tax − All Outflows)",
+            xaxis_title="Month",
+            yaxis=dict(title="$/month", tickformat="$,.0f"),
+            hovermode="x unified", legend=dict(orientation="h", y=-0.15))
+        st.plotly_chart(fig3, use_container_width=True)
+        st.caption(
+            "Negative values mean outflows exceed take-home that month. "
+            "Stay is almost always positive; Go goes negative when carrying both "
+            "house costs + RV costs simultaneously, then recovers sharply after house sale.")
+
+    # ------------------------------------------------------------------
+    # Tab 4: Assets & Debt — side-by-side subplots, Stay | Go
+    #         Stacked areas above zero = assets by type
+    #         Stacked areas below zero = debt by type
+    # ------------------------------------------------------------------
     with tab4:
-        fig4 = go.Figure()
-        # Stay and Go retirement are identical (same contribution rates) by default
-        fig4.add_trace(go.Scatter(x=df["Month"], y=df["Stay_Retirement"],
-                                   name="Retirement Balance",
-                                   line=dict(color="green", width=2.5)))
-        for milestone in [100_000, 250_000, 500_000, 1_000_000]:
-            if milestone < retire_yr10 * 1.5:
-                fig4.add_hline(y=milestone, line_dash="dash",
-                                line_color="rgba(100,100,100,0.3)",
-                                annotation_text=f"${milestone//1000}K",
-                                annotation_font_size=10)
-        fig4.update_layout(title="Retirement Balance Over Time",
-                            xaxis_title="Month", yaxis_title="Balance ($)",
-                            hovermode="x unified", yaxis_tickformat="$,.0f")
+        if event_legend:
+            st.caption(event_legend)
+
+        fig4 = make_subplots(
+            rows=1, cols=2,
+            subplot_titles=["Stay Scenario", "Go Scenario"],
+            shared_yaxes=True)
+
+        # ---- STAY assets (stacked by component) ----
+        fig4.add_trace(go.Scatter(
+            x=df["Month"], y=df["Stay_HouseValue"],
+            name="House", stackgroup="stay_assets",
+            line=dict(width=0), fillcolor="rgba(70,130,180,0.6)",
+            hovertemplate="House: $%{y:,.0f}<extra></extra>"),
+            row=1, col=1)
+        fig4.add_trace(go.Scatter(
+            x=df["Month"], y=df["Stay_CX5Value"],
+            name="CX-5", stackgroup="stay_assets",
+            line=dict(width=0), fillcolor="rgba(70,130,180,0.35)",
+            hovertemplate="CX-5: $%{y:,.0f}<extra></extra>"),
+            row=1, col=1)
+        fig4.add_trace(go.Scatter(
+            x=df["Month"], y=df["Stay_AlineValue"],
+            name="Aliner", stackgroup="stay_assets",
+            line=dict(width=0), fillcolor="rgba(70,130,180,0.2)",
+            hovertemplate="Aliner: $%{y:,.0f}<extra></extra>"),
+            row=1, col=1)
+
+        # ---- STAY debt (negative stacked) ----
+        fig4.add_trace(go.Scatter(
+            x=df["Month"], y=-df["Stay_MortgageBalance"],
+            name="Mortgage", stackgroup="stay_debt",
+            line=dict(width=0), fillcolor="rgba(180,60,60,0.5)",
+            hovertemplate="Mortgage: -$%{customdata:,.0f}<extra></extra>",
+            customdata=df["Stay_MortgageBalance"]),
+            row=1, col=1)
+        fig4.add_trace(go.Scatter(
+            x=df["Month"], y=-df["Stay_CX5Balance"],
+            name="CX-5 Loan", stackgroup="stay_debt",
+            line=dict(width=0), fillcolor="rgba(180,60,60,0.3)",
+            hovertemplate="CX-5 loan: -$%{customdata:,.0f}<extra></extra>",
+            customdata=df["Stay_CX5Balance"]),
+            row=1, col=1)
+
+        # ---- GO assets (stacked by component) ----
+        fig4.add_trace(go.Scatter(
+            x=df["Month"], y=df["Go_HouseValue"],
+            name="House (Go)", stackgroup="go_assets",
+            line=dict(width=0), fillcolor="rgba(255,140,0,0.6)",
+            hovertemplate="House: $%{y:,.0f}<extra></extra>",
+            showlegend=False),
+            row=1, col=2)
+        fig4.add_trace(go.Scatter(
+            x=df["Month"], y=df["Go_CX5Value"],
+            name="CX-5 (Go)", stackgroup="go_assets",
+            line=dict(width=0), fillcolor="rgba(255,140,0,0.45)",
+            hovertemplate="CX-5: $%{y:,.0f}<extra></extra>",
+            showlegend=False),
+            row=1, col=2)
+        fig4.add_trace(go.Scatter(
+            x=df["Month"], y=df["Go_AlineValue"],
+            name="Aliner (Go)", stackgroup="go_assets",
+            line=dict(width=0), fillcolor="rgba(255,140,0,0.3)",
+            hovertemplate="Aliner: $%{y:,.0f}<extra></extra>",
+            showlegend=False),
+            row=1, col=2)
+        fig4.add_trace(go.Scatter(
+            x=df["Month"], y=df["Go_TruckValue"],
+            name="Truck", stackgroup="go_assets",
+            line=dict(width=0), fillcolor="rgba(180,100,0,0.5)",
+            hovertemplate="Truck: $%{y:,.0f}<extra></extra>"),
+            row=1, col=2)
+        fig4.add_trace(go.Scatter(
+            x=df["Month"], y=df["Go_RVValue"],
+            name="RV", stackgroup="go_assets",
+            line=dict(width=0), fillcolor="rgba(100,60,0,0.4)",
+            hovertemplate="RV: $%{y:,.0f}<extra></extra>"),
+            row=1, col=2)
+
+        # ---- GO debt (negative stacked) ----
+        fig4.add_trace(go.Scatter(
+            x=df["Month"], y=-df["Go_MortgageBalance"],
+            name="Mortgage (Go)", stackgroup="go_debt",
+            line=dict(width=0), fillcolor="rgba(180,60,60,0.5)",
+            hovertemplate="Mortgage: -$%{customdata:,.0f}<extra></extra>",
+            customdata=df["Go_MortgageBalance"], showlegend=False),
+            row=1, col=2)
+        fig4.add_trace(go.Scatter(
+            x=df["Month"], y=-df["Go_CX5Balance"],
+            name="CX-5 Loan (Go)", stackgroup="go_debt",
+            line=dict(width=0), fillcolor="rgba(180,60,60,0.3)",
+            hovertemplate="CX-5 loan: -$%{customdata:,.0f}<extra></extra>",
+            customdata=df["Go_CX5Balance"], showlegend=False),
+            row=1, col=2)
+        fig4.add_trace(go.Scatter(
+            x=df["Month"], y=-df["Go_TruckBalance"],
+            name="Truck Loan", stackgroup="go_debt",
+            line=dict(width=0), fillcolor="rgba(140,40,40,0.4)",
+            hovertemplate="Truck loan: -$%{customdata:,.0f}<extra></extra>",
+            customdata=df["Go_TruckBalance"]),
+            row=1, col=2)
+        fig4.add_trace(go.Scatter(
+            x=df["Month"], y=-df["Go_RVBalance"],
+            name="RV Loan", stackgroup="go_debt",
+            line=dict(width=0), fillcolor="rgba(100,20,20,0.5)",
+            hovertemplate="RV loan: -$%{customdata:,.0f}<extra></extra>",
+            customdata=df["Go_RVBalance"]),
+            row=1, col=2)
+
+        # Zero line on both panels
+        fig4.add_hline(y=0, line_color="black", line_width=0.8, opacity=0.5)
+
+        for i, ev in enumerate(events):
+            fig4.add_vline(x=ev["Month"], line_dash="dash",
+                           line_color="rgba(90,90,90,0.3)", line_width=1,
+                           row=1, col=2)
+
+        fig4.update_layout(
+            title="Asset Composition & Debt Over Time",
+            hovermode="x unified",
+            yaxis=dict(title="Value ($)", tickformat="$,.0f"),
+            yaxis2=dict(tickformat="$,.0f"),
+            legend=dict(orientation="h", y=-0.18),
+            height=500)
+        fig4.update_xaxes(title_text="Month")
         st.plotly_chart(fig4, use_container_width=True)
+        st.caption("Areas above zero = asset values by type. Areas below zero = outstanding loan balances. "
+                   "The sudden collapse of the house bar (Go panel) at the sale month is the key visual.")
+
+    # ------------------------------------------------------------------
+    # Tab 5: Retirement balance
+    # ------------------------------------------------------------------
+    with tab5:
+        fig5 = go.Figure()
+        fig5.add_trace(go.Scatter(
+            x=df["Month"], y=df["Stay_Retirement"],
+            name="Retirement Balance",
+            line=dict(color="green", width=2.5),
+            hovertemplate="Retirement: $%{y:,.0f}<extra></extra>"))
+        for milestone in [100_000, 250_000, 500_000, 1_000_000]:
+            if milestone < retire_yr10 * 1.6:
+                fig5.add_hline(
+                    y=milestone, line_dash="dash",
+                    line_color="rgba(100,100,100,0.3)",
+                    annotation_text=f"${milestone//1000}K",
+                    annotation_position="bottom right",
+                    annotation_font_size=10)
+        fig5.update_layout(
+            title="Retirement Balance Over Time",
+            xaxis_title="Month",
+            yaxis=dict(title="Balance ($)", tickformat="$,.0f"),
+            hovermode="x unified")
+        st.plotly_chart(fig5, use_container_width=True)
+        st.caption("Retirement balance is identical in both scenarios (same contribution rates). "
+                   "Use the sidebar to model different contribution rates if desired.")
 
     # -----------------------------------------------------------------------
     # MONTH-BY-MONTH TABLE
