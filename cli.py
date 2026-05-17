@@ -203,7 +203,8 @@ def cli():
     Commands:
       summary      10-year net worth comparison
       depreciation Depreciation cost: truck + RV vs keeping the CX-5
-      cashflow     Monthly cash flow for a given year
+      cashflow     Monthly surplus for a given year (income minus all outflows)
+      costs        Line-item cost breakdown before and after house sale
       networth     Year-by-year net worth table
       breakeven    When (if ever) does Go catch up to Stay?
       events       Life events and their timing in the Go scenario
@@ -364,7 +365,7 @@ def depreciation(**kw):
 @click.option("--year", default=1, type=int, show_default=True,
               help="Simulation year to display (1–10)")
 def cashflow(year, **kw):
-    """Monthly cash flow (income after tax minus all outflows) for one year."""
+    """Monthly surplus (net income minus all outflows) — Stay vs. Go, for one year."""
     if not 1 <= year <= 10:
         raise click.BadParameter("must be between 1 and 10", param_hint="--year")
 
@@ -375,52 +376,140 @@ def cashflow(year, **kw):
     start_m = (year - 1) * 12
     end_m   = start_m + 12
 
-    console.print(_header(f"Monthly Cash Flow — Year {year}", p))
+    console.print(_header(f"Monthly Cash Flow Surplus — Year {year}", p))
+    console.print("[dim]Surplus = net take-home income − all outflows (loans, housing, living costs)[/dim]\n")
 
     t = Table(box=box.SIMPLE_HEAD, header_style="bold")
-    t.add_column("Month",       justify="right", min_width=6)
-    t.add_column("Date",        min_width=10)
-    t.add_column("Stay Income", justify="right", min_width=12)
-    t.add_column("Stay Out",    justify="right", min_width=11)
-    t.add_column("Stay Surplus",justify="right", min_width=13)
-    t.add_column("Go Income",   justify="right", min_width=12)
-    t.add_column("Go Out",      justify="right", min_width=11)
-    t.add_column("Go Surplus",  justify="right", min_width=11)
+    t.add_column("Mo",           justify="right", min_width=4)
+    t.add_column("Date",         min_width=10)
+    t.add_column("Stay Out",     justify="right", min_width=10)
+    t.add_column("Stay Surplus", justify="right", min_width=13)
+    t.add_column("Go Out",       justify="right", min_width=10)
+    t.add_column("Go Surplus",   justify="right", min_width=11)
+    t.add_column("Diff (Go−Stay)", justify="right", min_width=14)
 
-    stay_surplus_total = go_surplus_total = 0.0
+    stay_total = go_total = 0.0
     for i in range(start_m, end_m):
         sr = stay_df.iloc[i]
         gr = go_df.iloc[i]
         s_surp = sr["Stay_NetIncome"] - sr["Stay_TotalOutflow"]
         g_surp = gr["Go_NetIncome"]   - gr["Go_TotalOutflow"]
-        stay_surplus_total += s_surp
-        go_surplus_total   += g_surp
+        stay_total += s_surp
+        go_total   += g_surp
+        diff = g_surp - s_surp
 
         t.add_row(
             str(int(sr["Month"])),
             str(sr["Date"]),
-            d(sr["Stay_NetIncome"]),
             d(sr["Stay_TotalOutflow"]),
             signed(s_surp),
-            d(gr["Go_NetIncome"]),
             d(gr["Go_TotalOutflow"]),
             signed(g_surp),
+            signed(diff),
         )
 
     t.add_section()
-    t.add_row(
-        "Total", "", "", "",
-        signed(stay_surplus_total),
-        "", "",
-        signed(go_surplus_total),
-    )
-    t.add_row(
-        "Avg/mo", "", "", "",
-        signed(stay_surplus_total / 12),
-        "", "",
-        signed(go_surplus_total / 12),
-    )
+    t.add_row("Total", "", "", signed(stay_total), "", signed(go_total),
+              signed(go_total - stay_total))
+    t.add_row("Avg/mo", "", "", signed(stay_total / 12), "", signed(go_total / 12),
+              signed((go_total - stay_total) / 12))
     console.print(t)
+    console.print("[dim]Use `costs` command to see what's inside each outflow number.[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# costs — per-category breakdown for the Go scenario
+# ---------------------------------------------------------------------------
+
+@cli.command()
+@shared_options
+@click.option("--month", default=None, type=int,
+              help="Specific month to inspect (default: shows before and after house sale)")
+def costs(month, **kw):
+    """Monthly cost breakdown for the Go scenario — what's actually in each outflow.
+
+    By default shows two months side-by-side: the last month before the house
+    sells and the first full month after. Pass --month N to inspect any month.
+    """
+    p = build_params(**kw)
+    _, ev_list = simulate_go(p)
+    go_df, _ = simulate_go(p)
+
+    # Find house-sale month from events
+    house_sale_m = next(
+        (ev["Month"] for ev in ev_list if "House sold" in ev["Event"]), None)
+
+    if month is not None:
+        months_to_show = [month]
+        labels = [f"Month {month}"]
+    elif house_sale_m:
+        before = max(1, house_sale_m - 1)
+        after  = min(120, house_sale_m + 1)
+        months_to_show = [before, after]
+        labels = [f"Month {before} (before house sale)", f"Month {after} (after house sale)"]
+    else:
+        months_to_show = [1, 6]
+        labels = ["Month 1", "Month 6"]
+
+    console.print(_header("Go Scenario — Monthly Cost Breakdown", p))
+    if house_sale_m:
+        console.print(f"  House sells at Month {house_sale_m}. "
+                      f"Mortgage + housing costs drop to $0 after that.\n")
+
+    CATEGORIES = [
+        ("Housing",      [
+            ("Mortgage P&I",   "Go_MortgageOut"),
+            ("Property tax",   "Go_PropTax"),
+            ("Home insurance", "Go_HOI"),
+            ("Utilities",      "Go_HomeUtil"),
+            ("Maintenance",    "Go_HomeMaint"),
+        ]),
+        ("Truck (RAM 2500)", [
+            ("Loan payment",   "Go_TruckLoanOut"),
+            ("Insurance",      "Go_TruckIns"),
+            ("Fuel",           "Go_TruckFuel"),
+            ("Maintenance",    "Go_TruckMaint"),
+        ]),
+        ("RV", [
+            ("Loan payment",   "Go_RVLoanOut"),
+            ("Insurance",      "Go_RVIns"),
+            ("Campground",     "Go_Campground"),
+            ("Propane",        "Go_Propane"),
+            ("Internet",       "Go_Internet"),
+            ("RV maintenance", "Go_RVMaint"),
+            ("Groceries",      "Go_Groceries"),
+        ]),
+    ]
+
+    for col_m, label in zip(months_to_show, labels):
+        row = go_df.iloc[col_m - 1]
+        console.print(f"[bold]{label}[/bold]   "
+                      f"  Income: {d(row['Go_NetIncome'])}/mo  |  "
+                      f"Total outflow: {d(row['Go_TotalOutflow'])}/mo  |  "
+                      f"Surplus: {signed(row['Go_NetIncome'] - row['Go_TotalOutflow'])}/mo")
+
+        t = Table(box=box.SIMPLE, show_header=False, padding=(0, 1))
+        t.add_column("Category", min_width=22)
+        t.add_column("Line item",  min_width=18, style="dim")
+        t.add_column("Amount",     justify="right", min_width=10)
+
+        for group_name, lines in CATEGORIES:
+            group_total = sum(row[col] for _, col in lines)
+            t.add_row(f"[bold]{group_name}[/bold]", "", f"[bold]{d(group_total)}[/bold]")
+            for label_line, col in lines:
+                val = row[col]
+                is_zero_housing = (val == 0 and group_name == "Housing")
+                amount_str = f"[dim]{d(val)}[/dim]" if val == 0 else d(val)
+                if is_zero_housing and label_line == "Mortgage P&I":
+                    amount_str += " [dim]← gone[/dim]"
+                t.add_row("", label_line, amount_str)
+            t.add_section()
+
+        total_check = sum(
+            row[col] for _, lines in CATEGORIES for _, col in lines)
+        t.add_row("[bold]Total (categorized)[/bold]", "", f"[bold]{d(total_check)}[/bold]")
+        console.print(t)
+        console.print()
 
 
 # ---------------------------------------------------------------------------

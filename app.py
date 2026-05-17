@@ -508,6 +508,10 @@ def simulate_go(p: dict) -> pd.DataFrame:
         else:
             rv_loan_outflow = 0.0
 
+        # Initialize per-category vars before conditional block so they're always defined
+        rv_insurance_out = campground_out = propane_out = internet_out = 0.0
+        rv_maint_out = rv_groceries = domicile_mail_out = emerg_out = 0.0
+
         if rv_owned:
             rv_insurance_out = p["rv_insurance_monthly"] * inf
             campground_out = p["campground_fees_monthly"] * inf
@@ -621,6 +625,23 @@ def simulate_go(p: dict) -> pd.DataFrame:
             "Go_GrossMonthly": gross_monthly,
             "Go_NetIncome": net_income,
             "Go_TotalOutflow": total_outflow,
+            # Per-category cost breakdown (for CLI cost analysis)
+            "Go_MortgageOut": mortgage_outflow,
+            "Go_PropTax": property_tax,
+            "Go_HOI": hoi,
+            "Go_HomeUtil": home_utilities,
+            "Go_HomeMaint": home_maintenance,
+            "Go_TruckLoanOut": truck_loan_outflow,
+            "Go_TruckIns": truck_insurance_out,
+            "Go_TruckFuel": truck_fuel_out,
+            "Go_TruckMaint": truck_maint_out,
+            "Go_RVLoanOut": rv_loan_outflow,
+            "Go_RVIns": rv_insurance_out,
+            "Go_Campground": campground_out,
+            "Go_Propane": propane_out,
+            "Go_Internet": internet_out,
+            "Go_RVMaint": rv_maint_out,
+            "Go_Groceries": rv_groceries + house_groceries,
         })
 
     return pd.DataFrame(rows), events
