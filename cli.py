@@ -456,59 +456,76 @@ def costs(month, **kw):
         console.print(f"  House sells at Month {house_sale_m}. "
                       f"Mortgage + housing costs drop to $0 after that.\n")
 
-    CATEGORIES = [
-        ("Housing",      [
-            ("Mortgage P&I",   "Go_MortgageOut"),
-            ("Property tax",   "Go_PropTax"),
-            ("Home insurance", "Go_HOI"),
-            ("Utilities",      "Go_HomeUtil"),
-            ("Maintenance",    "Go_HomeMaint"),
-        ]),
-        ("Truck (RAM 2500)", [
-            ("Loan payment",   "Go_TruckLoanOut"),
-            ("Insurance",      "Go_TruckIns"),
-            ("Fuel",           "Go_TruckFuel"),
-            ("Maintenance",    "Go_TruckMaint"),
-        ]),
-        ("RV", [
-            ("Loan payment",   "Go_RVLoanOut"),
-            ("Insurance",      "Go_RVIns"),
-            ("Campground",     "Go_Campground"),
-            ("Propane",        "Go_Propane"),
-            ("Internet",       "Go_Internet"),
-            ("RV maintenance", "Go_RVMaint"),
-            ("Groceries",      "Go_Groceries"),
-        ]),
+    # All line items: (label, df_column, group)
+    ALL_LINES = [
+        ("Mortgage P&I",    "Go_MortgageOut",  "Housing"),
+        ("Property tax",    "Go_PropTax",       "Housing"),
+        ("Home insurance",  "Go_HOI",           "Housing"),
+        ("Utilities",       "Go_HomeUtil",      "Housing"),
+        ("Home maint.",     "Go_HomeMaint",     "Housing"),
+        ("Truck loan",      "Go_TruckLoanOut",  "Truck"),
+        ("Truck insurance", "Go_TruckIns",      "Truck"),
+        ("Truck fuel",      "Go_TruckFuel",     "Truck"),
+        ("Truck maint.",    "Go_TruckMaint",    "Truck"),
+        ("RV loan",         "Go_RVLoanOut",     "RV"),
+        ("RV insurance",    "Go_RVIns",         "RV"),
+        ("Campground",      "Go_Campground",    "RV"),
+        ("Propane",         "Go_Propane",       "RV"),
+        ("Internet",        "Go_Internet",      "RV"),
+        ("RV maint.",       "Go_RVMaint",       "RV"),
+        ("Groceries",       "Go_Groceries",     "RV"),
+        ("Domicile mail",   "Go_DomicileMail",  "RV"),
+        ("Emerg. reserve",  "Go_EmergReserve",  "RV"),
     ]
+    GROUPS = ["Housing", "Truck", "RV"]
+    GROUP_COLS = {g: [col for _, col, grp in ALL_LINES if grp == g] for g in GROUPS}
 
     for col_m, label in zip(months_to_show, labels):
         row = go_df.iloc[col_m - 1]
-        console.print(f"[bold]{label}[/bold]   "
-                      f"  Income: {d(row['Go_NetIncome'])}/mo  |  "
-                      f"Total outflow: {d(row['Go_TotalOutflow'])}/mo  |  "
-                      f"Surplus: {signed(row['Go_NetIncome'] - row['Go_TotalOutflow'])}/mo")
+        total_out = row["Go_TotalOutflow"]
+        surplus = row["Go_NetIncome"] - total_out
+        console.print(
+            f"[bold]{label}[/bold]  —  "
+            f"Income: [cyan]{d(row['Go_NetIncome'])}/mo[/cyan]  |  "
+            f"Total outflow: [cyan]{d(total_out)}/mo[/cyan]  |  "
+            f"Surplus: {signed(surplus)}/mo")
 
+        # --- Grouped breakdown ---
         t = Table(box=box.SIMPLE, show_header=False, padding=(0, 1))
-        t.add_column("Category", min_width=22)
-        t.add_column("Line item",  min_width=18, style="dim")
-        t.add_column("Amount",     justify="right", min_width=10)
+        t.add_column("Group",    min_width=10)
+        t.add_column("Line item", min_width=17, style="dim")
+        t.add_column("Amount",   justify="right", min_width=9)
+        t.add_column("% total",  justify="right", min_width=8)
 
-        for group_name, lines in CATEGORIES:
-            group_total = sum(row[col] for _, col in lines)
-            t.add_row(f"[bold]{group_name}[/bold]", "", f"[bold]{d(group_total)}[/bold]")
-            for label_line, col in lines:
+        for grp in GROUPS:
+            grp_total = sum(row[c] for c in GROUP_COLS[grp])
+            t.add_row(f"[bold]{grp}[/bold]", "",
+                      f"[bold]{d(grp_total)}[/bold]",
+                      f"[bold]{grp_total/total_out*100:.0f}%[/bold]")
+            for lbl, col, g in ALL_LINES:
+                if g != grp:
+                    continue
                 val = row[col]
-                is_zero_housing = (val == 0 and group_name == "Housing")
-                amount_str = f"[dim]{d(val)}[/dim]" if val == 0 else d(val)
-                if is_zero_housing and label_line == "Mortgage P&I":
-                    amount_str += " [dim]← gone[/dim]"
-                t.add_row("", label_line, amount_str)
+                if val == 0:
+                    t.add_row("", lbl, f"[dim]{d(val)}[/dim]", "[dim]—[/dim]")
+                else:
+                    bar = "█" * max(1, round(val / total_out * 20))
+                    t.add_row("", lbl, d(val),
+                              f"[dim]{val/total_out*100:.0f}%[/dim] {bar}")
             t.add_section()
 
-        total_check = sum(
-            row[col] for _, lines in CATEGORIES for _, col in lines)
-        t.add_row("[bold]Total (categorized)[/bold]", "", f"[bold]{d(total_check)}[/bold]")
+        t.add_row("[bold]TOTAL[/bold]", "", f"[bold]{d(total_out)}[/bold]", "[bold]100%[/bold]")
         console.print(t)
+
+        # --- Ranked list (non-zero only) ---
+        ranked = sorted(
+            [(lbl, row[col]) for lbl, col, _ in ALL_LINES if row[col] > 0],
+            key=lambda x: x[1], reverse=True)
+        console.print("  [bold]Ranked by size:[/bold]")
+        for rank, (lbl, val) in enumerate(ranked, 1):
+            bar = "█" * max(1, round(val / total_out * 30))
+            console.print(f"  {rank:>2}. {lbl:<18} {d(val):>8}  "
+                          f"({val/total_out*100:.0f}%)  [cyan]{bar}[/cyan]")
         console.print()
 
 

@@ -642,6 +642,8 @@ def simulate_go(p: dict) -> pd.DataFrame:
             "Go_Internet": internet_out,
             "Go_RVMaint": rv_maint_out,
             "Go_Groceries": rv_groceries + house_groceries,
+            "Go_DomicileMail": domicile_mail_out,
+            "Go_EmergReserve": emerg_out,
         })
 
     return pd.DataFrame(rows), events
