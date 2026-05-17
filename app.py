@@ -710,10 +710,10 @@ def main():
         house_selling_costs = st.slider("Selling Costs (%)", 0.0, 10.0, 7.0, 0.25) / 100
         cx5_tradein_value = st.number_input("CX-5 Trade-in Value ($)", value=20_000, step=500)
 
-        st.header("Truck (Ram 3500 — Go Only)")
+        st.header("Truck (Ram 2500 — Go Only)")
         truck_purchase_date = st.date_input("Truck Purchase Date",
                                              value=today + timedelta(days=30))
-        truck_price = st.number_input("Truck Purchase Price ($)", value=72_000, step=1_000)
+        truck_price = st.number_input("Truck Purchase Price ($)", value=62_000, step=1_000)
         truck_down = st.number_input("Truck Down Payment ($)", value=0, step=1_000)
         truck_apr = st.slider("Truck Loan APR (%)", 0.0, 12.0, 0.0, 0.1) / 100
         truck_term = st.number_input("Truck Loan Term (months)", value=36, step=12)
@@ -726,10 +726,10 @@ def main():
         truck_maintenance = st.number_input("Truck Annual Maintenance ($)",
                                              value=2_400, step=100)
 
-        st.header("RV (Brinkley Z 3610 — Go Only)")
+        st.header("RV (Go Only)")
         rv_purchase_date = st.date_input("RV Purchase Date",
                                           value=today + timedelta(days=44))
-        rv_price = st.number_input("RV Purchase Price ($)", value=115_000, step=1_000)
+        rv_price = st.number_input("RV Purchase Price ($)", value=88_000, step=1_000)
         use_house_proceeds = st.checkbox(
             "Use available cash (house proceeds) as RV down payment?", value=True,
             help="If checked, all liquid cash above the emergency floor will be used as RV down payment")
@@ -1004,8 +1004,9 @@ def main():
                 **({} if row is None else {"xref": f"x{col if col>1 else ''}", "yref": f"y{row} domain"}),
             )
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(
-        ["Net Worth", "Liquid Wealth", "Monthly Cash Flow", "Assets & Debt", "Retirement"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
+        ["Net Worth", "Liquid Wealth", "Monthly Cash Flow", "Assets & Debt", "Retirement",
+         "Depreciation Cost"])
 
     # ------------------------------------------------------------------
     # Tab 1: Net Worth — two lines + shaded difference + event markers
@@ -1328,6 +1329,133 @@ def main():
         st.plotly_chart(fig5, use_container_width=True)
         st.caption("Retirement balance is identical in both scenarios (same contribution rates). "
                    "Use the sidebar to model different contribution rates if desired.")
+
+    # ------------------------------------------------------------------
+    # Tab 6: Depreciation-only cost of ownership (Truck + RV)
+    # ------------------------------------------------------------------
+    with tab6:
+        st.subheader("Cost of Ownership — Depreciation Only")
+        st.caption(
+            "Shows how much value the truck and RV shed each year and what that "
+            "costs per month as a pure depreciation expense. No financing, insurance, "
+            "or operating costs included.")
+
+        dep_rows = []
+        tv = params["truck_purchase_price"]
+        rv_v = params["rv_purchase_price"]
+        for yr in range(1, 11):
+            # Depreciation rates this year
+            t_rate = (params["truck_depreciation_rate_early"] if yr <= 5
+                      else params["truck_depreciation_rate_late"])
+            r_rate = (params["rv_depreciation_rate_early"] if yr <= 5
+                      else params["rv_depreciation_rate_late"])
+
+            tv_start, rv_start = tv, rv_v
+            for _ in range(12):
+                tv = depreciate_monthly(tv, t_rate)
+                rv_v = depreciate_monthly(rv_v, r_rate)
+
+            truck_dep = tv_start - tv
+            rv_dep = rv_start - rv_v
+            combined_dep = truck_dep + rv_dep
+
+            dep_rows.append({
+                "Year": yr,
+                "Truck Value (Start)": tv_start,
+                "Truck Value (End)": tv,
+                "Truck Depreciation": truck_dep,
+                "RV Value (Start)": rv_start,
+                "RV Value (End)": rv_v,
+                "RV Depreciation": rv_dep,
+                "Combined Depreciation": combined_dep,
+                "$/Month (Depreciation)": combined_dep / 12,
+            })
+
+        dep_df = pd.DataFrame(dep_rows)
+        total_truck_dep = params["truck_purchase_price"] - dep_df["Truck Value (End)"].iloc[-1]
+        total_rv_dep = params["rv_purchase_price"] - dep_df["RV Value (End)"].iloc[-1]
+        total_dep = total_truck_dep + total_rv_dep
+
+        ka, kb, kc, kd = st.columns(4)
+        ka.metric("Truck Purchase Price", f"${params['truck_purchase_price']:,.0f}")
+        kb.metric("RV Purchase Price", f"${params['rv_purchase_price']:,.0f}")
+        kc.metric("Combined Purchase Price", f"${params['truck_purchase_price'] + params['rv_purchase_price']:,.0f}")
+        kd.metric("10-Year Total Depreciation", f"${total_dep:,.0f}",
+                  delta=f"${total_dep / 120:,.0f}/mo avg")
+
+        t1, t2 = st.columns(2)
+        t1.metric("Truck 10-yr Depreciation", f"${total_truck_dep:,.0f}",
+                  delta=f"{total_truck_dep / params['truck_purchase_price'] * 100:.1f}% of purchase price")
+        t2.metric("RV 10-yr Depreciation", f"${total_rv_dep:,.0f}",
+                  delta=f"{total_rv_dep / params['rv_purchase_price'] * 100:.1f}% of purchase price")
+
+        # Bar chart: combined annual depreciation
+        fig6 = go.Figure()
+        fig6.add_trace(go.Bar(
+            x=dep_df["Year"], y=dep_df["Truck Depreciation"],
+            name="Truck (Ram 2500)", marker_color="steelblue"))
+        fig6.add_trace(go.Bar(
+            x=dep_df["Year"], y=dep_df["RV Depreciation"],
+            name="RV", marker_color="darkorange"))
+        fig6.update_layout(
+            barmode="stack",
+            title="Annual Depreciation by Year — Truck + RV",
+            xaxis_title="Year",
+            yaxis=dict(title="Depreciation ($)", tickformat="$,.0f"),
+            legend=dict(orientation="h", y=-0.15))
+        st.plotly_chart(fig6, use_container_width=True)
+
+        # Value decay line chart
+        fig6b = go.Figure()
+        decay_months = list(range(121))
+        tv2 = params["truck_purchase_price"]
+        rv2 = params["rv_purchase_price"]
+        tv_vals, rv_vals, combo_vals = [tv2], [rv2], [tv2 + rv2]
+        for m2 in range(1, 121):
+            yr2 = (m2 - 1) // 12 + 1
+            t_r = (params["truck_depreciation_rate_early"] if yr2 <= 5
+                   else params["truck_depreciation_rate_late"])
+            r_r = (params["rv_depreciation_rate_early"] if yr2 <= 5
+                   else params["rv_depreciation_rate_late"])
+            tv2 = depreciate_monthly(tv2, t_r)
+            rv2 = depreciate_monthly(rv2, r_r)
+            tv_vals.append(tv2)
+            rv_vals.append(rv2)
+            combo_vals.append(tv2 + rv2)
+
+        fig6b.add_trace(go.Scatter(
+            x=decay_months, y=tv_vals,
+            name="Truck (Ram 2500)", line=dict(color="steelblue", width=2),
+            hovertemplate="Month %{x}: $%{y:,.0f}<extra>Truck</extra>"))
+        fig6b.add_trace(go.Scatter(
+            x=decay_months, y=rv_vals,
+            name="RV", line=dict(color="darkorange", width=2),
+            hovertemplate="Month %{x}: $%{y:,.0f}<extra>RV</extra>"))
+        fig6b.add_trace(go.Scatter(
+            x=decay_months, y=combo_vals,
+            name="Combined", line=dict(color="purple", width=2.5, dash="dot"),
+            hovertemplate="Month %{x}: $%{y:,.0f}<extra>Combined</extra>"))
+        fig6b.update_layout(
+            title="Asset Value Decay Over 10 Years",
+            xaxis_title="Month",
+            yaxis=dict(title="Remaining Value ($)", tickformat="$,.0f"),
+            hovermode="x unified", legend=dict(orientation="h", y=-0.15))
+        st.plotly_chart(fig6b, use_container_width=True)
+
+        # Year-by-year table
+        st.markdown("**Year-by-Year Breakdown**")
+        dep_fmt = {c: "${:,.0f}" for c in dep_df.columns if c != "Year"}
+        dep_fmt["$/Month (Depreciation)"] = "${:,.0f}"
+        st.dataframe(
+            dep_df.style.format(dep_fmt),
+            use_container_width=True, hide_index=True)
+
+        st.caption(
+            f"Depreciation rates used: Truck {params['truck_depreciation_rate_early']*100:.1f}%/yr "
+            f"(yrs 1–5) → {params['truck_depreciation_rate_late']*100:.1f}%/yr (yrs 6–10). "
+            f"RV {params['rv_depreciation_rate_early']*100:.1f}%/yr (yrs 1–5) → "
+            f"{params['rv_depreciation_rate_late']*100:.1f}%/yr (yrs 6–10). "
+            "Adjust rates in the sidebar under Truck and RV sections.")
 
     # -----------------------------------------------------------------------
     # MONTH-BY-MONTH TABLE
