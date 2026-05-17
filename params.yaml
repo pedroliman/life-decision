@@ -5,7 +5,7 @@ personal:
   starting_retirement: 60000
 
 taxes:
-  nc_state_rate: 0.0399
+  nc_state_rate: 0.04
   fl_state_rate: 0.0
   federal_effective_rate: 0.18
   fica_rate: 0.0765
@@ -17,7 +17,7 @@ house:
   mortgage_months_remaining: 174
   property_tax_monthly: 300
   homeowners_insurance_monthly: 120
-  home_appreciation_rate: 0.02
+  home_appreciation_rate: 0.01
   home_maintenance_pct: 0.01
   home_utilities_monthly: 350
   groceries_monthly: 800
@@ -26,12 +26,12 @@ house:
 cx5:
   value: 22000
   balance: 20000
-  monthly_payment: 500
+  monthly_payment: 550
   months_remaining: 36
   depreciation_rate: 0.12
   insurance_monthly: 90
   fuel_monthly: 140
-  loan_apr: 0.06
+  loan_apr: 0.
   tradein_value: 20000
 
 aliner:
@@ -39,8 +39,8 @@ aliner:
   depreciation_rate: 0.05
 
 truck:
-  purchase_price: 62000
-  down_payment: 0
+  purchase_price: 60000
+  down_payment: 10000
   loan_apr: 0.0
   loan_months: 36
   depreciation_rate_early: 0.05
@@ -60,31 +60,31 @@ rv:
   use_all_available_cash: true
 
 rv_operating:
-  campground_fees_monthly: 1100
+  campground_fees_monthly: 600
   propane_monthly: 80
-  internet_monthly: 190
-  maintenance_monthly: 400
-  domicile_mail_monthly: 25
+  internet_monthly: 55
+  maintenance_monthly: 200
+  domicile_mail_monthly: 60
   emergency_reserve_monthly: 250
-  emergency_reserve_target: 15000
+  emergency_reserve_target: 30000
 
 retirement:
   employee_contribution_pct: 0.10
-  employer_match_pct: 0.04
+  employer_match_pct: 0.07
   annual_return: 0.08
   is_traditional: true
-  irs_employee_limit: 23500
+  irs_employee_limit: 24500
   irs_combined_limit: 70000
 
 investments:
-  cash_apy: 0.04
+  cash_apy: 0.035
   taxable_return: 0.07
   emergency_cash_floor: 25000
   inflation_rate: 0.03
 
 timeline:
-  truck_purchase_days: 30
-  aliner_sale_days: 44
-  rv_purchase_days: 44
-  house_sale_days: 90
-  domicile_change_days: 104
+  truck_purchase_days: 180
+  aliner_sale_days: 200
+  rv_purchase_days: 200
+  house_sale_days: 230
+  domicile_change_days: 260

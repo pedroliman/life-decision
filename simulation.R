@@ -149,157 +149,25 @@ load_params <- function(path = "params.yaml") {
 }
 
 # ---------------------------------------------------------------------------
-# simulate_stay: 120-month stay-in-house scenario
+# simulate: 120-month scenario simulator.
+#   stay = TRUE  -> events disabled (house, CX-5, aliner kept; no truck/RV)
+#   stay = FALSE -> all life events fire on schedule (Go scenario)
+# Output columns are prefixed with "Stay_" or "Go_" so the two results can be
+# joined on Month.
 # ---------------------------------------------------------------------------
 
-simulate_stay <- function(p) {
-  liquid      <- p$starting_cash
-  retirement  <- p$starting_retirement
-
-  house_value         <- p$home_value
-  mortgage_balance    <- p$mortgage_balance
-  mortgage_rate       <- p$mortgage_rate
-  mortgage_months_left <- p$mortgage_months_remaining
-  mortgage_pmt        <- monthly_payment(mortgage_balance, mortgage_rate, mortgage_months_left)
-
-  cx5_value      <- p$cx5_value
-  cx5_balance    <- p$cx5_balance
-  cx5_months_left <- p$cx5_months_remaining
-  cx5_pmt        <- p$cx5_monthly_payment
-  cx5_rate       <- p$cx5_rate
-
-  aliner_value <- p$aliner_value
-
-  ytd_employee <- 0.0
-  ytd_combined <- 0.0
-  current_year <- as.integer(format(Sys.Date(), "%Y"))  # year anchor — reset logic uses loop yr
-
-  rows <- vector("list", 120)
-
-  for (m in 1:120) {
-    # 0-based month index within simulation (matches Python's range(120))
-    m0 <- m - 1L
-
-    # Calendar year for this month (use a fixed start: year 1 = current_year)
-    yr <- current_year + (m0 %/% 12L)
-
-    # YTD reset when year rolls over
-    if (m > 1L) {
-      prev_yr <- current_year + ((m0 - 1L) %/% 12L)
-      if (yr != prev_yr) {
-        ytd_employee <- 0.0
-        ytd_combined <- 0.0
-      }
-    }
-
-    # --- Income ---
-    years_elapsed <- m0 %/% 12L
-    gross_monthly <- p$gross_annual_income * (1 + p$income_growth_rate)^years_elapsed / 12
-
-    # --- Retirement contributions (IRS-capped) ---
-    desired_employee <- gross_monthly * p$employee_contribution_pct
-    desired_employer <- gross_monthly * p$employer_match_pct
-    actual_employee  <- min(desired_employee, max(0, p$irs_employee_limit - ytd_employee))
-    room_combined    <- max(0, p$irs_combined_limit - ytd_combined - actual_employee)
-    actual_employer  <- min(desired_employer, room_combined)
-    ytd_employee <- ytd_employee + actual_employee
-    ytd_combined <- ytd_combined + actual_employee + actual_employer
-
-    # --- Taxes ---
-    taxable_income <- gross_monthly - (if (p$is_traditional) actual_employee else 0.0)
-    federal_tax    <- taxable_income * p$federal_effective_rate
-    state_tax      <- taxable_income * p$nc_state_rate
-    fica           <- gross_monthly * p$fica_rate
-    post_tax_ret_deduction <- if (!p$is_traditional) actual_employee else 0.0
-    net_income <- gross_monthly - federal_tax - state_tax - fica - post_tax_ret_deduction
-
-    # --- Inflation multiplier ---
-    inf <- (1 + p$inflation_rate / 12)^m0
-
-    # --- Mortgage ---
-    if (mortgage_months_left > 0 && mortgage_balance > 0) {
-      am <- amortize_mo(mortgage_balance, mortgage_rate, mortgage_pmt)
-      mortgage_balance     <- am$new_balance
-      mortgage_months_left <- mortgage_months_left - 1L
-      mortgage_outflow     <- mortgage_pmt
-    } else {
-      mortgage_outflow <- 0.0
-    }
-
-    # --- CX-5 loan ---
-    if (cx5_balance > 0 && cx5_months_left > 0) {
-      am2 <- amortize_mo(cx5_balance, cx5_rate, cx5_pmt)
-      cx5_balance      <- am2$new_balance
-      cx5_months_left  <- cx5_months_left - 1L
-      cx5_loan_outflow <- cx5_pmt
-    } else {
-      cx5_loan_outflow <- 0.0
-    }
-
-    property_tax    <- p$property_tax_monthly * inf
-    hoi             <- p$homeowners_insurance_monthly * inf
-    utilities       <- p$home_utilities_monthly * inf
-    groceries       <- p$groceries_monthly * inf
-    fuel_cx5        <- p$cx5_fuel_monthly * inf
-    cx5_insurance   <- p$cx5_insurance_monthly * inf
-    home_maintenance <- house_value * p$home_maintenance_pct / 12
-
-    total_outflow <- (mortgage_outflow + property_tax + hoi + utilities + groceries +
-                      fuel_cx5 + cx5_insurance + home_maintenance + cx5_loan_outflow)
-
-    # --- Update liquid wealth ---
-    liquid <- liquid + net_income - total_outflow
-
-    # --- Retirement compounding ---
-    retirement <- retirement * (1 + p$retirement_return / 12) + actual_employee + actual_employer
-
-    # --- Investment return on liquid ---
-    floor <- p$emergency_cash_floor
-    if (liquid > floor) {
-      liquid <- liquid + (liquid - floor) * (p$taxable_return / 12) + floor * (p$cash_apy / 12)
-    } else if (liquid > 0) {
-      liquid <- liquid * (1 + p$cash_apy / 12)
-    }
-
-    cash_reported    <- min(liquid, floor)
-    taxable_inv      <- max(0.0, liquid - floor)
-
-    # --- Asset/liability updates ---
-    house_value  <- house_value * (1 + p$home_appreciation_rate / 12)
-    cx5_value    <- depreciate_mo(cx5_value, p$cx5_depreciation_rate)
-    aliner_value <- depreciate_mo(aliner_value, p$aliner_depreciation_rate)
-
-    assets   <- house_value + cx5_value + aliner_value
-    debt     <- mortgage_balance + cx5_balance
-    net_worth <- liquid + retirement + assets - debt
-
-    rows[[m]] <- list(
-      Month             = m,
-      Stay_Cash         = cash_reported,
-      Stay_TaxableInv   = taxable_inv,
-      Stay_Assets       = assets,
-      Stay_Retirement   = retirement,
-      Stay_Debt         = debt,
-      Stay_NetWorth     = net_worth,
-      Stay_HouseValue   = house_value,
-      Stay_MortgageBalance = mortgage_balance,
-      Stay_CX5Value     = cx5_value,
-      Stay_AlineValue   = aliner_value,
-      Stay_CX5Balance   = cx5_balance,
-      Stay_GrossMonthly = gross_monthly,
-      Stay_NetIncome    = net_income,
-      Stay_TotalOutflow = total_outflow
-    )
+simulate <- function(p, stay = FALSE) {
+  # In Stay mode, push every life-event month past the 120-month horizon so
+  # the corresponding event branches never trigger. The rest of the loop is
+  # identical to the Go scenario.
+  if (stay) {
+    p$truck_month       <- .Machine$integer.max
+    p$aliner_sale_month <- .Machine$integer.max
+    p$rv_month          <- .Machine$integer.max
+    p$house_sale_month  <- .Machine$integer.max
+    p$domicile_month    <- .Machine$integer.max
   }
 
-  dplyr::bind_rows(rows)
-}
-
-# ---------------------------------------------------------------------------
-# simulate_go: 120-month go full-time RV scenario
-# ---------------------------------------------------------------------------
-
-simulate_go <- function(p) {
   liquid     <- p$starting_cash
   retirement <- p$starting_retirement
 
@@ -639,48 +507,53 @@ simulate_go <- function(p) {
     net_worth <- liquid + retirement + assets - debt
 
     rows[[m]] <- list(
-      Month              = m,
-      Go_Cash            = cash_reported,
-      Go_TaxableInv      = taxable_inv,
-      Go_Assets          = assets,
-      Go_Retirement      = retirement,
-      Go_Debt            = debt,
-      Go_NetWorth        = net_worth,
-      Go_HouseValue      = if (!house_sold) house_value else 0.0,
-      Go_MortgageBalance = if (!house_sold) mortgage_balance else 0.0,
-      Go_CX5Value        = if (cx5_active) cx5_value else 0.0,
-      Go_CX5Balance      = if (cx5_active) cx5_balance else 0.0,
-      Go_AlineValue      = if (!aliner_sold) aliner_value else 0.0,
-      Go_TruckValue      = if (truck_owned) truck_value else 0.0,
-      Go_TruckBalance    = if (truck_owned) truck_balance else 0.0,
-      Go_RVValue         = if (rv_owned) rv_value else 0.0,
-      Go_RVBalance       = if (rv_owned) rv_balance else 0.0,
-      Go_GrossMonthly    = gross_monthly,
-      Go_NetIncome       = net_income,
-      Go_TotalOutflow    = total_outflow,
+      Month           = m,
+      Cash            = cash_reported,
+      TaxableInv      = taxable_inv,
+      Assets          = assets,
+      Retirement      = retirement,
+      Debt            = debt,
+      NetWorth        = net_worth,
+      HouseValue      = if (!house_sold) house_value else 0.0,
+      MortgageBalance = if (!house_sold) mortgage_balance else 0.0,
+      CX5Value        = if (cx5_active) cx5_value else 0.0,
+      CX5Balance      = if (cx5_active) cx5_balance else 0.0,
+      AlineValue      = if (!aliner_sold) aliner_value else 0.0,
+      TruckValue      = if (truck_owned) truck_value else 0.0,
+      TruckBalance    = if (truck_owned) truck_balance else 0.0,
+      RVValue         = if (rv_owned) rv_value else 0.0,
+      RVBalance       = if (rv_owned) rv_balance else 0.0,
+      GrossMonthly    = gross_monthly,
+      NetIncome       = net_income,
+      TotalOutflow    = total_outflow,
       # Per-category cost breakdown
-      mortgage_out       = mortgage_outflow,
-      prop_tax           = prop_tax,
-      hoi                = hoi,
-      home_util          = home_util,
-      home_maint         = home_maint,
-      truck_loan_out     = truck_loan_out,
-      truck_ins          = truck_ins,
-      truck_fuel         = truck_fuel,
-      truck_maint        = truck_maint,
-      rv_loan_out        = rv_loan_out,
-      rv_ins             = rv_ins,
-      campground_out     = campground_out,
-      propane_out        = propane_out,
-      internet_out       = internet_out,
-      rv_maint_out       = rv_maint_out,
-      groceries          = rv_groceries + house_groceries,
-      domicile_mail      = domicile_mail,
-      emerg_reserve      = emerg_out
+      mortgage_out    = mortgage_outflow,
+      prop_tax        = prop_tax,
+      hoi             = hoi,
+      home_util       = home_util,
+      home_maint      = home_maint,
+      truck_loan_out  = truck_loan_out,
+      truck_ins       = truck_ins,
+      truck_fuel      = truck_fuel,
+      truck_maint     = truck_maint,
+      rv_loan_out     = rv_loan_out,
+      rv_ins          = rv_ins,
+      campground_out  = campground_out,
+      propane_out     = propane_out,
+      internet_out    = internet_out,
+      rv_maint_out    = rv_maint_out,
+      groceries       = rv_groceries + house_groceries,
+      domicile_mail   = domicile_mail,
+      emerg_reserve   = emerg_out
     )
   }
 
-  dplyr::bind_rows(rows)
+  out <- dplyr::bind_rows(rows)
+  # Prefix scenario columns (everything except Month) so Stay/Go results can
+  # be joined into a single wide table.
+  prefix <- if (stay) "Stay_" else "Go_"
+  names(out)[names(out) != "Month"] <- paste0(prefix, names(out)[names(out) != "Month"])
+  out
 }
 
 # ---------------------------------------------------------------------------
@@ -694,10 +567,10 @@ cat("Loading parameters from:", yaml_path, "\n")
 p <- load_params(yaml_path)
 
 cat("Running Stay simulation...\n")
-stay_df <- simulate_stay(p)
+stay_df <- simulate(p, stay = TRUE)
 
 cat("Running Go simulation...\n")
-go_df <- simulate_go(p)
+go_df <- simulate(p, stay = FALSE)
 
 # Merge on Month
 df <- dplyr::inner_join(stay_df, go_df, by = "Month")
@@ -849,12 +722,12 @@ if (first_full_month > 120) {
 } else {
   breakdown_row <- go_df %>% dplyr::filter(Month == first_full_month)
 
-  cost_cols <- c(
+  cost_cols <- paste0("Go_", c(
     "mortgage_out", "prop_tax", "hoi", "home_util", "home_maint",
     "truck_loan_out", "truck_ins", "truck_fuel", "truck_maint",
     "rv_loan_out", "rv_ins", "campground_out", "propane_out",
     "internet_out", "rv_maint_out", "groceries", "domicile_mail", "emerg_reserve"
-  )
+  ))
 
   labels <- c(
     "Mortgage P&I", "Property Tax", "Homeowners Insurance", "Home Utilities", "Home Maintenance",
