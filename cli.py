@@ -46,6 +46,7 @@ def build_params(
     rv_price, truck_price, home_value, gross_income,
     rv_apr, truck_apr, cx5_value,
     rv_dep_early, rv_dep_late, truck_dep_early, truck_dep_late,
+    campground=1_100.0,
 ):
     today = date.today()
     return {
@@ -104,7 +105,7 @@ def build_params(
         "rv_depreciation_rate_late": rv_dep_late,
         "rv_insurance_monthly": 200.0,
         "rv_setup_costs": 6_000.0,
-        "campground_fees_monthly": 1_100.0,
+        "campground_fees_monthly": campground,
         "propane_monthly": 80.0,
         "internet_monthly": 190.0,
         "rv_maintenance_monthly": 400.0,
@@ -152,6 +153,8 @@ _SHARED_OPTIONS = [
                  metavar="RATE", help="Truck annual depreciation rate, yrs 1-5"),
     click.option("--truck-dep-late",  default=0.07, type=float, show_default=True,
                  metavar="RATE", help="Truck annual depreciation rate, yrs 6-10"),
+    click.option("--campground",      default=1_100.0, type=float, show_default=True,
+                 metavar="$",    help="Monthly campground fees"),
 ]
 
 
