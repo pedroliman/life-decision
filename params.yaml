@@ -1,0 +1,90 @@
+personal:
+  gross_annual_income: 160000
+  income_growth_rate: 0.03
+  starting_cash: 30000
+  starting_retirement: 60000
+
+taxes:
+  nc_state_rate: 0.0399
+  fl_state_rate: 0.0
+  federal_effective_rate: 0.18
+  fica_rate: 0.0765
+
+house:
+  home_value: 400000
+  mortgage_balance: 342000
+  mortgage_rate: 0.05
+  mortgage_months_remaining: 174
+  property_tax_monthly: 300
+  homeowners_insurance_monthly: 120
+  home_appreciation_rate: 0.02
+  home_maintenance_pct: 0.01
+  home_utilities_monthly: 350
+  groceries_monthly: 800
+  house_selling_costs_pct: 0.07
+
+cx5:
+  value: 22000
+  balance: 20000
+  monthly_payment: 500
+  months_remaining: 36
+  depreciation_rate: 0.12
+  insurance_monthly: 90
+  fuel_monthly: 140
+  loan_apr: 0.06
+  tradein_value: 20000
+
+aliner:
+  value: 8000
+  depreciation_rate: 0.05
+
+truck:
+  purchase_price: 62000
+  down_payment: 0
+  loan_apr: 0.0
+  loan_months: 36
+  depreciation_rate_early: 0.05
+  depreciation_rate_late: 0.07
+  insurance_monthly: 130
+  fuel_monthly: 400
+  annual_maintenance: 2400
+
+rv:
+  purchase_price: 88000
+  loan_apr: 0.075
+  loan_months: 180
+  depreciation_rate_early: 0.08
+  depreciation_rate_late: 0.05
+  insurance_monthly: 200
+  setup_costs: 6000
+  use_all_available_cash: true
+
+rv_operating:
+  campground_fees_monthly: 1100
+  propane_monthly: 80
+  internet_monthly: 190
+  maintenance_monthly: 400
+  domicile_mail_monthly: 25
+  emergency_reserve_monthly: 250
+  emergency_reserve_target: 15000
+
+retirement:
+  employee_contribution_pct: 0.10
+  employer_match_pct: 0.04
+  annual_return: 0.08
+  is_traditional: true
+  irs_employee_limit: 23500
+  irs_combined_limit: 70000
+
+investments:
+  cash_apy: 0.04
+  taxable_return: 0.07
+  emergency_cash_floor: 25000
+  inflation_rate: 0.03
+
+timeline:
+  truck_purchase_days: 30
+  aliner_sale_days: 44
+  rv_purchase_days: 44
+  house_sale_days: 90
+  domicile_change_days: 104
